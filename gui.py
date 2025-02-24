@@ -4,7 +4,7 @@ import time
 import os
 import config
 
-# File to store window position
+# --- Functions to save and load window position ---
 POSITION_FILE = "window_position.txt"
 
 def save_window_position(x, y):
@@ -21,7 +21,7 @@ def load_window_position():
                 return x, y
             except Exception as e:
                 print("Error loading position:", e)
-    return 100, 100  # default
+    return 100, 100  # default position
 
 def sendHTTP(data):
     response = requests.get("http://172.16.32.112:8000/" + data)
@@ -32,14 +32,12 @@ def sendHTTP(data):
 # Set Theme
 sg.theme("DarkAmber")
 
-# Load saved window position
+# --- Load saved position ---
 start_x, start_y = load_window_position()
 
-# Define the non-collapsing header
+# --- Define layout ---
 header = [[sg.Text("RF.Guru EpiCenter              Attenuator",
                     font=("Helvetica", 10), justification="center")]]
-
-# Define dynamic content
 switches = []
 collapsible_layout = []
 for i, val in enumerate(config.LoRaPorts):
@@ -55,7 +53,7 @@ for i, val in enumerate(config.LoRaPorts):
 
 layout = header + collapsible_layout
 
-# Create the Window at the saved position
+# --- Create window at saved position ---
 windowTitle = "RF.Guru EpiCenter Switch"
 window = sg.Window(windowTitle, layout, keep_on_top=True, grab_anywhere=True,
                    location=(start_x, start_y), finalize=True)
@@ -63,69 +61,93 @@ window = sg.Window(windowTitle, layout, keep_on_top=True, grab_anywhere=True,
 for i in range(len(config.LoRaPorts)):
     window["sl" + str(i)].bind("<ButtonRelease-1>", "")
 
-# Variables for expand/collapse behavior
-collapsed_height = 30       # Height when collapsed (header only)
+# --- Variables for expand/collapse behavior ---
+# collapsed_height: only header visible; expanded_height: full window when expanded
+collapsed_height = 30
 expanded_height = 40 + (len(config.LoRaPorts) * 30)
-safe_zone = 10              # Extra pixels for safe zone
+safe_zone = 10
 
-# We'll track the position in our own variables
+# We'll track position using TK's winfo methods
 x, y = window.TKroot.winfo_x(), window.TKroot.winfo_y()
-collapsed_y = y
-expanded = False
+collapsed_y = y  # When collapsed, the window's y is as-is.
+expanded = False  # Initially, start in collapsed mode
 dragging = False
 last_hover_time = None
 
 # Start in collapsed mode
 window.TKroot.geometry(f"300x{collapsed_height}+{x}+{collapsed_y}")
 
+# --- Main Event Loop ---
 while True:
     event, values = window.read(timeout=100)
     
     if event == sg.WIN_CLOSED:
-        # Save the last known position (using our tracked x and y)
-        save_window_position(x, y+expanded_height)
+        save_window_position(final_x, final_y+expanded_height)
         break
+        
+    # Save the current window position using our tracked x,y
+    final_x = window.TKroot.winfo_x()
+    final_y = window.TKroot.winfo_y()
 
-    # Update current window position using TK methods
-    new_x = window.TKroot.winfo_x()
-    new_y = window.TKroot.winfo_y()
+    # Detect dragging: update our tracked x,y if the window moves
+    new_x, new_y = window.current_location()
     if new_x != x or new_y != y:
         dragging = True
         x, y = new_x, new_y
-        collapsed_y = y  # Update collapsed position
+        collapsed_y = y  # update collapsed position
     else:
         dragging = False
 
-    # Calculate the expanded window's top (expanding upward)
+    # Calculate the top position when expanded so that the header remains in place
     expand_y = collapsed_y - (expanded_height - collapsed_height)
     
-    # Get mouse position
+    # Get mouse and window geometry
     mouse_x = window.TKroot.winfo_pointerx()
     mouse_y = window.TKroot.winfo_pointery()
     win_x = window.TKroot.winfo_x()
     win_y = window.TKroot.winfo_y()
     win_width = window.TKroot.winfo_width()
 
-    # Expand when mouse hovers over the header area (collapsed area)
-    if (not dragging and 
-        win_x <= mouse_x <= win_x + win_width and 
+    # Expand when mouse hovers over the header (collapsed area)
+    if (not dragging and
+        win_x <= mouse_x <= win_x + win_width and
         win_y <= mouse_y <= win_y + collapsed_height):
         if not expanded:
             window.TKroot.geometry(f"300x{expanded_height}+{x}+{expand_y}")
             expanded = True
             last_hover_time = None
 
-    # Collapse after 0.5 sec if mouse leaves the full expanded window (with safe zone)
-    if (not dragging and expanded and 
-        not (win_x <= mouse_x <= win_x + win_width and 
+    # Collapse after 0.5 seconds if mouse leaves the full expanded window (with safe zone)
+    if (not dragging and expanded and
+        not (win_x <= mouse_x <= win_x + win_width and
              win_y <= mouse_y <= win_y + expanded_height + safe_zone)):
         if last_hover_time is None:
             last_hover_time = time.time()
         if time.time() - last_hover_time > 0.5:
-            # For collapse, we want to keep the header at the bottom of the window.
+            # When collapsing, position the window so that its header remains at the bottom.
             collapsed_y = y + (expanded_height - collapsed_height)
             window.TKroot.geometry(f"300x{collapsed_height}+{x}+{collapsed_y}")
             expanded = False
             last_hover_time = None
+
+    # Process button clicks
+    if event.startswith("bt"):
+        str_pos = event.removeprefix("bt")
+        pos = int(str_pos)
+        switch = switches[pos]
+        att = values["sl" + str_pos]
+        for i in range(len(config.LoRaPorts)):
+            window["bt" + str(i)].update(button_color=("#83932F" if i == pos else "#E0BC61"))
+        sendHTTP(f"{switch}/{att}")
+
+    elif event.startswith("sl"):
+        if sg.EVENT_SYSTEM_TRAY_ICON_DOUBLE_CLICKED:
+            str_pos = event.removeprefix("sl")
+            pos = int(str_pos)
+            switch = switches[pos]
+            att = values["sl" + str_pos]
+            for i in range(len(config.LoRaPorts)):
+                window["bt" + str(i)].update(button_color=("#83932F" if i == pos else "#E0BC61"))
+            sendHTTP(f"{switch}/{att}")
 
 window.close()
