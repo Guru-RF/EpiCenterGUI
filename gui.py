@@ -1,36 +1,31 @@
 import PySimpleGUI as sg
 import requests
-
+import time
 import config
 
-
 def sendHTTP(data):
-    response = requests.get("http://172.16.132.174:8000/" + data)
-
-    # Check if the request was successful (status code 200)
+    response = requests.get("http://172.16.32.112:8000/" + data)
     if response.status_code != 200:
         print(f"Failed to retrieve data. Status code: {response.status_code}")
-
     return True
 
+# Set Theme
+Theme = "DarkAmber"
+sg.theme(Theme)
 
-Theme = "DarkAmber"  # [‘Black’, ‘BlueMono’, ‘BluePurple’, ‘BrightColors’, ‘BrownBlue’, ‘Dark’, ‘Dark2’, ‘DarkAmber’, ‘DarkBlack’, ‘DarkBlack1’, ‘DarkBlue’, ‘DarkBlue1’, ‘DarkBlue10’, ‘DarkBlue11’, ‘DarkBlue12’, ‘DarkBlue13’, ‘DarkBlue14’, ‘DarkBlue15’, ‘DarkBlue16’, ‘DarkBlue17’, ‘DarkBlue2’, ‘DarkBlue3’, ‘DarkBlue4’, ‘DarkBlue5’, ‘DarkBlue6’, ‘DarkBlue7’, ‘DarkBlue8’, ‘DarkBlue9’, ‘DarkBrown’, ‘DarkBrown1’, ‘DarkBrown2’, ‘DarkBrown3’, ‘DarkBrown4’, ‘DarkBrown5’, ‘DarkBrown6’, ‘DarkGreen’, ‘DarkGreen1’, ‘DarkGreen2’, ‘DarkGreen3’, ‘DarkGreen4’, ‘DarkGreen5’, ‘DarkGreen6’, ‘DarkGrey’, ‘DarkGrey1’, ‘DarkGrey2’, ‘DarkGrey3’, ‘DarkGrey4’, ‘DarkGrey5’, ‘DarkGrey6’, ‘DarkGrey7’, ‘DarkPurple’, ‘DarkPurple1’, ‘DarkPurple2’, ‘DarkPurple3’, ‘DarkPurple4’, ‘DarkPurple5’, ‘DarkPurple6’, ‘DarkRed’, ‘DarkRed1’, ‘DarkRed2’, ‘DarkTanBlue’, ‘DarkTeal’, ‘DarkTeal1’, ‘DarkTeal10’, ‘DarkTeal11’, ‘DarkTeal12’, ‘DarkTeal2’, ‘DarkTeal3’, ‘DarkTeal4’, ‘DarkTeal5’, ‘DarkTeal6’, ‘DarkTeal7’, ‘DarkTeal8’, ‘DarkTeal9’, ‘Default’, ‘Default1’, ‘DefaultNoMoreNagging’, ‘Green’, ‘GreenMono’, ‘GreenTan’, ‘HotDogStand’, ‘Kayak’, ‘LightBlue’, ‘LightBlue1’, ‘LightBlue2’, ‘LightBlue3’, ‘LightBlue4’, ‘LightBlue5’, ‘LightBlue6’, ‘LightBlue7’, ‘LightBrown’, ‘LightBrown1’, ‘LightBrown10’, ‘LightBrown11’, ‘LightBrown12’, ‘LightBrown13’, ‘LightBrown2’, ‘LightBrown3’, ‘LightBrown4’, ‘LightBrown5’, ‘LightBrown6’, ‘LightBrown7’, ‘LightBrown8’, ‘LightBrown9’, ‘LightGray1’, ‘LightGreen’, ‘LightGreen1’, ‘LightGreen10’, ‘LightGreen2’, ‘LightGreen3’, ‘LightGreen4’, ‘LightGreen5’, ‘LightGreen6’, ‘LightGreen7’, ‘LightGreen8’, ‘LightGreen9’, ‘LightGrey’, ‘LightGrey1’, ‘LightGrey2’, ‘LightGrey3’, ‘LightGrey4’, ‘LightGrey5’, ‘LightGrey6’, ‘LightPurple’, ‘LightTeal’, ‘LightYellow’, ‘Material1’, ‘Material2’, ‘NeutralBlue’, ‘Purple’, ‘Reddit’, ‘Reds’, ‘SandyBeach’, ‘SystemDefault’, ‘SystemDefault1’, ‘SystemDefaultForReal’, ‘Tan’, ‘TanBlue’, ‘TealMono’, ‘Topanga’]
-sg.theme(Theme)  # Add a touch of color
+# Define the non-collapsing header
+header = [[sg.Text("RF.Guru EpiCenter              Attenuator", font=("Helvetica", 10), justification="center")]]
 
-layout = []
-
-arr = [sg.Text("RF.Guru EpiCenter              Attenuator")]
-layout.append(arr)
-
+# Define the dynamic content that collapses
 switches = []
-
+collapsible_layout = []
 for i, val in enumerate(config.LoRaPorts):
     sw, att = config.LoRaPorts[val]
     switches.append(sw)
     buttonColor = "#E0BC61"
     if i == 0:
         buttonColor = "#83932F"
-    arr = [
+    collapsible_layout.append([
         sg.Button(
             val, metadata=val, size=(18, 1), key="bt" + str(i), button_color=buttonColor
         ),
@@ -45,38 +40,90 @@ for i, val in enumerate(config.LoRaPorts):
             default_value=att,
             key="sl" + str(i),
         ),
-    ]
-    layout.append(arr)
+    ])
 
+# Merge layouts
+layout = header + collapsible_layout
 
 # Create the Window
 windowTitle = "RF.Guru EpiCenter Switch"
 window = sg.Window(
-    windowTitle, layout, keep_on_top=True, grab_anywhere=True, finalize=True
+    windowTitle,
+    layout,
+    keep_on_top=True,
+    grab_anywhere=True,
+    finalize=True,
 )
 
 for i in range(len(config.LoRaPorts)):
     window["sl" + str(i)].bind("<ButtonRelease-1>", "")
 
-# Event Loop to process "events" and get the "values" of the inputs
+# Window expansion/collapse variables
+x, y = window.current_location()
+collapsed_height = 30  # Only the RF.Guru EpiCenter header is visible
+expanded_height = 30 + (len(config.LoRaPorts) * 30)  # Adjust height based on number of buttons
+safe_zone = 10  # Extra 10px safe zone to prevent flickering
+
+collapsed_y = y  # Start with the window at its current position
+expanded = False  # Track expansion state
+dragging = False  # Track if the window is being moved
+last_hover_time = None  # Timer for collapse delay
+
+# Event Loop to process "events" and handle expand/collapse
 while True:
-    event, values = window.read()
-    print(event)
+    event, values = window.read(timeout=100)
+
     if event == sg.WIN_CLOSED:
         break
-    elif event.startswith("bt"):
+
+    # **Detect dragging and update collapsed position**
+    new_x, new_y = window.current_location()
+    if new_x != x or new_y != y:
+        dragging = True
+        x, y = new_x, new_y
+        collapsed_y = y  # Store new collapsed position dynamically
+
+    # Ensure expansion happens upwards from the correct position
+    expand_y = collapsed_y - (expanded_height - collapsed_height)
+
+    # **Expand when hovered over the RF.Guru EpiCenter area**
+    mouse_x = window.TKroot.winfo_pointerx()
+    mouse_y = window.TKroot.winfo_pointery()
+    win_x = window.TKroot.winfo_x()
+    win_y = window.TKroot.winfo_y()
+    win_width = window.TKroot.winfo_width()
+    win_height = window.TKroot.winfo_height()
+
+    # Adjust hover detection so it includes the full expanded height
+    if not dragging and win_x <= mouse_x <= win_x + win_width and win_y <= mouse_y <= win_y + expanded_height:
+        if not expanded:
+            window.TKroot.geometry(f"300x{expanded_height}+{x}+{expand_y}")  # Expand upwards
+            expanded = True
+            last_hover_time = None  # Reset collapse timer
+
+    # **Collapse downwards after 0.5 sec if mouse leaves the FULL expanded window (with safe zone)**
+    if expanded and not (win_x <= mouse_x <= win_x + win_width and win_y <= mouse_y <= win_y + expanded_height + safe_zone):
+        if last_hover_time is None:
+            last_hover_time = time.time()  # Start collapse timer
+
+        if time.time() - last_hover_time > 0.5:
+            window.TKroot.geometry(f"300x{collapsed_height}+{x}+{collapsed_y + (expanded_height - collapsed_height)}")  # Collapse downward
+            expanded = False
+            last_hover_time = None  # Reset timer
+
+    # **Reset dragging state after movement**
+    dragging = False
+
+    # Process button clicks
+    if event.startswith("bt"):
         str_pos = event.removeprefix("bt")
         pos = int(str_pos)
         switch = switches[pos]
         att = values["sl" + str_pos]
         for i in range(len(config.LoRaPorts)):
-            if i != pos:
-                window["bt" + str(i)].update(button_color=("#E0BC61"))
-            else:
-                window["bt" + str(i)].update(button_color=("#83932F"))
-        httpREQ = switch + "/" + str(att)
-        print(httpREQ)
-        sendHTTP(httpREQ)
+            window["bt" + str(i)].update(button_color=("#83932F" if i == pos else "#E0BC61"))
+        sendHTTP(f"{switch}/{att}")
+
     elif event.startswith("sl"):
         if sg.EVENT_SYSTEM_TRAY_ICON_DOUBLE_CLICKED:
             str_pos = event.removeprefix("sl")
@@ -84,12 +131,7 @@ while True:
             switch = switches[pos]
             att = values["sl" + str_pos]
             for i in range(len(config.LoRaPorts)):
-                if i != pos:
-                    window["bt" + str(i)].update(button_color=("#E0BC61"))
-                else:
-                    window["bt" + str(i)].update(button_color=("#83932F"))
-            httpREQ = switch + "/" + str(att)
-            print(httpREQ)
-            sendHTTP(httpREQ)
+                window["bt" + str(i)].update(button_color=("#83932F" if i == pos else "#E0BC61"))
+            sendHTTP(f"{switch}/{att}")
 
 window.close()
